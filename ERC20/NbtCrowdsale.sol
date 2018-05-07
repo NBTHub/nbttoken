@@ -2,7 +2,7 @@ pragma solidity ^0.4.17;
 import 'zeppelin-solidity/contracts/crowdsale/Crowdsale.sol';
 import 'zeppelin-solidity/contracts/lifecycle/Pausable.sol';
 import 'zeppelin-solidity/contracts/token/ERC20/ERC20.sol';
-import 'zeppelin-solidity/contracts/ownership/rbac/RBAC.sol';
+import 'zeppelin-solidity/contracts/ownership/rbac/RBACWithAdmin.sol';
 
 // NbtToken crowdsale-valuable interface
 contract NbtToken  {
@@ -10,25 +10,28 @@ contract NbtToken  {
     uint256 public MAX_SALE_VOLUME;
     function balanceOf(address who) public view returns (uint256);
     function transfer(address to, uint256 value) public returns (bool);
-    function moveTokensFromSaleToOnHand(address _to, uint256 _amount) public returns (bool);
+    function moveTokensFromSaleToCirculating(address _to, uint256 _amount) public returns (bool);
 }
 
 // Main crowdsale contract
-contract NbtCrowdsale is Crowdsale, Pausable {
+contract NbtCrowdsale is Crowdsale, Pausable, RBACWithAdmin {
 
     /*** EVENTS ***/
 
     event NewStart(uint256 start);
     event NewDeadline(uint256 deadline);
     event NewRate(uint256 rate);
+    event NewWallet(address new_address);
     event Sale(address indexed buyer, uint256 tokens_with_bonuses);
 
     /*** CONSTANTS ***/
 
     uint256 public DECIMALS = 8;
-    uint256 public BONUS = 5; // %
-    uint256 public BONUS_LIMIT = 400000000 * 10**DECIMALS;
-    address public exchanger = address(0);
+    uint256 public BONUS1 = 100; // %
+    uint256 public BONUS1_LIMIT = 150000000 * 10**DECIMALS;
+    uint256 public BONUS2 = 60; // %
+    uint256 public BONUS2_LIMIT = 250000000 * 10**DECIMALS;
+    uint256 public MIN_TOKENS = 1000 * 10**DECIMALS;
 
     NbtToken public token;
 
@@ -57,10 +60,10 @@ contract NbtCrowdsale is Crowdsale, Pausable {
         require(_rate > 0);
         require(_wallet != address(0));
         require(_token != address(0));
+        require(_start < _deadline);
 
-        deadline = _deadline;
         start = _start;
-        emit NewStart(start);
+        deadline = _deadline;
 
         rate = _rate;
         wallet = _wallet;
@@ -73,7 +76,7 @@ contract NbtCrowdsale is Crowdsale, Pausable {
      * @dev set new start date for crowdsale.
      * @param _start The new start timestamp
      */
-    function setStart(uint256 _start) onlyOwner whenPaused public returns (bool) {
+    function setStart(uint256 _start) onlyAdmin whenPaused public returns (bool) {
         require(_start < deadline);
         start = _start;
         emit NewStart(start);
@@ -84,7 +87,7 @@ contract NbtCrowdsale is Crowdsale, Pausable {
      * @dev set new start date for crowdsale.
      * @param _deadline The new deadline timestamp
      */
-    function setDeadline(uint256 _deadline) onlyOwner whenPaused public returns (bool) {
+    function setDeadline(uint256 _deadline) onlyAdmin whenPaused public returns (bool) {
         require(start < _deadline);
         deadline = _deadline;
         emit NewDeadline(_deadline);
@@ -92,29 +95,61 @@ contract NbtCrowdsale is Crowdsale, Pausable {
     }
 
     /**
-     * @dev set new rate for crowdsale.
-     * @param _rate Number of token units a buyer gets per wei
+     * @dev set new wallet address
+     * @param _addr The new wallet address
      */
-    function setRate(uint256 _rate) onlyOwner whenPaused public returns (bool) {
-        require(_rate > 0);
-        _rate = _rate;
-        emit NewRate(_rate);
+    function setWallet(address _addr) onlyAdmin public returns (bool) {
+        require(_addr != address(0) && _addr != address(this));
+        wallet = _addr;
+        emit NewWallet(wallet);
         return true;
     }
 
     /**
      * @dev set new rate for crowdsale.
+     * @param _rate Number of token units a buyer gets per wei
      */
-    function sendToExchanger(uint256 _tokenAmount) onlyOwner  public returns (bool) {
-        require(_tokenAmount > 0);
-        _deliverTokens(exchanger, _tokenAmount);
+    function setRate(uint256 _rate) onlyAdmin public returns (bool) {
+        require(_rate > 0);
+        rate = _rate;
+        emit NewRate(rate);
         return true;
+    }
+
+    /**
+      * @dev called by the admin to pause, triggers stopped state
+      */
+    function pause() onlyAdmin whenNotPaused public {
+        paused = true;
+        emit Pause();
+    }
+
+    /**
+     * @dev called by the admin to unpause, returns to normal state
+     */
+    function unpause() onlyAdmin whenPaused public {
+        paused = false;
+        emit Unpause();
+    }
+
+    function getCurrentBonus() public view returns (uint256) {
+        if (token.MAX_SALE_VOLUME().sub(token.saleableTokens()) < BONUS1_LIMIT) {
+            return BONUS1;
+        } else if (token.MAX_SALE_VOLUME().sub(token.saleableTokens()) < BONUS2_LIMIT) {
+            return BONUS2;
+        } else {
+            return 0;
+        }
+    }
+
+    function getTokenAmount(uint256 _weiAmount) public view returns (uint256) {
+        return _getTokenAmount(_weiAmount);
     }
 
     /**
      * Close the crowdsale
      */
-    function closeCrowdsale() afterDeadline public {
+    function closeCrowdsale() onlyAdmin afterDeadline public {
         crowdsaleClosed = true;
     }
 
@@ -127,7 +162,9 @@ contract NbtCrowdsale is Crowdsale, Pausable {
        */
     function _preValidatePurchase(address _beneficiary, uint256 _weiAmount) whenNotPaused afterStart beforeDeadline internal {
         require(!crowdsaleClosed);
+        require(_weiAmount >= 1000000000000);
         require(_getTokenAmount(_weiAmount) <= token.balanceOf(this));
+        require(_getTokenAmount(_weiAmount) >= MIN_TOKENS);
         super._preValidatePurchase(_beneficiary, _weiAmount);
     }
 
@@ -146,7 +183,7 @@ contract NbtCrowdsale is Crowdsale, Pausable {
       * @param _tokenAmount Number of tokens to be emitted
       */
     function _deliverTokens(address _beneficiary, uint256 _tokenAmount) internal {
-        token.moveTokensFromSaleToOnHand(_beneficiary, _tokenAmount);
+        token.moveTokensFromSaleToCirculating(_beneficiary, _tokenAmount);
         token.transfer(_beneficiary, _tokenAmount);
         emit Sale(_beneficiary, _tokenAmount);
     }
@@ -175,10 +212,11 @@ contract NbtCrowdsale is Crowdsale, Pausable {
      * @return Number of tokens that can be purchased with the specified _weiAmount
      */
     function _getTokenAmount(uint256 _weiAmount) internal view returns (uint256) {
-        if (token.MAX_SALE_VOLUME().div(token.saleableTokens()) > BONUS_LIMIT) {
-            return _weiAmount.mul(rate);
+        uint256 _current_bonus =  getCurrentBonus();
+        if (_current_bonus == 0) {
+            return _weiAmount.mul(rate).div(1000000000000); // token amount for 1 Gwei
         } else {
-            return _weiAmount.mul(rate).mul(BONUS.add(100)).div(100);
+            return _weiAmount.mul(rate).mul(_current_bonus.add(100)).div(100).div(1000000000000); // token amount for 1 Gwei
         }
     }
 
@@ -188,4 +226,5 @@ contract NbtCrowdsale is Crowdsale, Pausable {
     function _forwardFunds() internal {
         wallet.transfer(msg.value);
     }
+
 }
