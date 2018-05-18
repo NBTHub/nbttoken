@@ -1,7 +1,7 @@
 'use strict';
 const constants = require('byteballcore/constants.js');
 const conf = require('byteballcore/conf');
-const localConf = require('./conf.json'); // *
+const localConf = require('./conf.json');
 const db = require('byteballcore/db');
 const eventBus = require('byteballcore/event_bus');
 const texts = require('./texts');
@@ -11,11 +11,11 @@ const notifications = require('./modules/notifications');
 const byteball_ins = require('./modules/byteball_ins');
 const conversion = require('./modules/conversion-and-headless.js');
 const desktopApp = require('byteballcore/desktop_app.js');
-const pool = require('./modules/mysql_connect.js'); // *
+const pool = require('./modules/mysql_connect.js');
 var connection = pool();
 const headlessWallet = require('./start_headless.js');
 
-var CURRENT_TIMESTAMP = { toSqlString: function() { return 'CURRENT_TIMESTAMP()'; } }; // *
+var CURRENT_TIMESTAMP = { toSqlString: function() { return 'CURRENT_TIMESTAMP()'; } };
 
 if (!localConf.created_asset) {
     throw Error("config asset");
